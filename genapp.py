@@ -1787,7 +1787,7 @@ class LottoApp:
             st.write("Najstarsze losowanie:")
             st.code(f'{int(oldest["Losowanie"])}: ' + " ".join(f"{int(oldest[col]):02d}" for col in self.columns))
 
-    def settings_ui(self, dna: Optional[Dict[str, Any]] = None) -> GeneratorSettings:
+    def settings_ui(self, dna: Optional[Dict[str, Any]] = None, key_prefix: str = "main") -> GeneratorSettings:
         st.subheader("⚙️ Ustawienia jakości")
         st.caption("Dobry start: suma 120–180, parzyste 2–4, niskie 2–4, max 2 z sektora, max 2 z ostatniego losowania.")
 
@@ -1811,39 +1811,40 @@ class LottoApp:
         c1, c2, c3, c4 = st.columns(4)
 
         with c1:
-            count = st.slider("Liczba kuponów", 1, 20, 3)
-            rolling_window = st.select_slider("Okno analizy", options=[80, 120, 160, 220, 300, 500], value=160)
+            count = st.slider("Liczba kuponów", 1, 20, 3, key=f"{key_prefix}_count")
+            rolling_window = st.select_slider("Okno analizy", options=[80, 120, 160, 220, 300, 500], value=160, key=f"{key_prefix}_rolling_window")
 
         with c2:
-            sum_min = st.number_input("Minimalna suma", 21, 294, default_sum_min)
-            sum_max = st.number_input("Maksymalna suma", 21, 294, default_sum_max)
+            sum_min = st.number_input("Minimalna suma", 21, 294, default_sum_min, key=f"{key_prefix}_sum_min")
+            sum_max = st.number_input("Maksymalna suma", 21, 294, default_sum_max, key=f"{key_prefix}_sum_max")
 
         with c3:
-            even_min = st.slider("Min. parzystych", 0, 6, default_even_min)
-            even_max = st.slider("Max. parzystych", 0, 6, default_even_max)
+            even_min = st.slider("Min. parzystych", 0, 6, default_even_min, key=f"{key_prefix}_even_min")
+            even_max = st.slider("Max. parzystych", 0, 6, default_even_max, key=f"{key_prefix}_even_max")
 
         with c4:
-            low_min = st.slider("Min. niskich 1–24", 0, 6, default_low_min)
-            low_max = st.slider("Max. niskich 1–24", 0, 6, default_low_max)
+            low_min = st.slider("Min. niskich 1–24", 0, 6, default_low_min, key=f"{key_prefix}_low_min")
+            low_max = st.slider("Max. niskich 1–24", 0, 6, default_low_max, key=f"{key_prefix}_low_max")
 
         c5, c6, c7 = st.columns(3)
 
         with c5:
-            max_chain = st.slider("Max ciąg kolejnych liczb", 1, 4, 2)
+            max_chain = st.slider("Max ciąg kolejnych liczb", 1, 4, 2, key=f"{key_prefix}_max_chain")
 
         with c6:
-            max_sector = st.slider("Max z jednego sektora", 1, 6, 2)
+            max_sector = st.slider("Max z jednego sektora", 1, 6, 2, key=f"{key_prefix}_max_sector")
 
         with c7:
-            max_latest = st.slider("Max z ostatniego losowania", 0, 6, 2)
+            max_latest = st.slider("Max z ostatniego losowania", 0, 6, 2, key=f"{key_prefix}_max_latest")
 
-        profile = st.selectbox("Profil pracy", ["Ekspres", "Szybki PRO", "Dokładny"], index=1)
+        profile = st.selectbox("Profil pracy", ["Ekspres", "Szybki PRO", "Dokładny"], index=1, key=f"{key_prefix}_profile")
         attempts = {"Ekspres": 800, "Szybki PRO": 1800, "Dokładny": 4000}[profile]
 
         risk_profile = st.selectbox(
             "Poziom ryzyka Strażnika AI",
             ["🟢 Bezpieczny", "🟡 Zrównoważony", "🔴 Agresywny"],
             index=1,
+            key=f"{key_prefix}_risk_profile",
             help=(
                 "Bezpieczny: najmocniejsza kontrola jakości. "
                 "Zrównoważony: najlepszy kompromis. "
@@ -1922,7 +1923,7 @@ class LottoApp:
         else:
             st.info(dna.get("message", "Brak DNA."))
 
-        settings = self.settings_ui(dna if dna.get("ready") else None)
+        settings = self.settings_ui(dna if dna.get("ready") else None, key_prefix="generator")
         model = self.analytics.build_model(settings.rolling_window)
 
         c1, c2, c3 = st.columns(3)
@@ -1967,7 +1968,7 @@ class LottoApp:
 
         e1, e2 = st.columns(2)
         with e1:
-            draw_id = st.number_input("Numer losowania", min_value=1, value=default_draw)
+            draw_id = st.number_input("Numer losowania", min_value=1, value=default_draw, key="manual_draw_id")
         with e2:
             draw_text = st.text_input("Wynik losowania", value=default_nums)
 
@@ -2032,9 +2033,9 @@ class LottoApp:
         st.header("🧪 Laboratorium eksperymentalne")
         st.warning("Te tryby nie są główną strategią. Używaj ich do testów, a skuteczność oceniaj w Lidze Modułów.")
 
-        settings = self.settings_ui(None)
+        settings = self.settings_ui(None, key_prefix="experimental")
         model = self.analytics.build_model(settings.rolling_window)
-        mode = st.selectbox("Tryb", ["Gorące", "Zimne", "Hybryda", "Losowe kontrolowane"])
+        mode = st.selectbox("Tryb", ["Gorące", "Zimne", "Hybryda", "Losowe kontrolowane"], key="experiments_mode")
 
         if st.button("🧪 Generuj eksperymentalnie", use_container_width=True):
             result = self.generator.generate(settings.count, settings, model, f"Eksperymentalny: {mode}", st.session_state.get("risk_profile_final", "🔴 Agresywny"))
@@ -2072,12 +2073,12 @@ class LottoApp:
                 ],
                 help="To pozwala AI budować Ligę Modułów i oceniać, które strategie realnie trafiają najlepiej.",
             )
-            ticket_text = st.text_input("Mój kupon", value="", help="Wpisz 6 liczb, np. 05 12 17 36 39 49.")
+            ticket_text = st.text_input("Mój kupon", value="", key="manual_ticket_text", help="Wpisz 6 liczb, np. 05 12 17 36 39 49.")
             note = st.text_input("Notatka do ustawień / strategii", value="", help="Opcjonalnie: np. suma 130-170, max 1 z ostatniego.")
 
         with c2:
-            draw_id = st.number_input("Numer losowania", min_value=1, value=default_draw)
-            draw_text = st.text_input("Wynik losowania", value=default_result)
+            draw_id = st.number_input("Numer losowania", min_value=1, value=default_draw, key="manual_draw_id")
+            draw_text = st.text_input("Wynik losowania", value=default_result, key="manual_draw_text")
 
         ticket = parse_number_list(ticket_text)
         draw_numbers = parse_number_list(draw_text)
@@ -2176,7 +2177,7 @@ class LottoApp:
             "za wielu gorących/zimnych liczb albo wzorów wybieranych często przez ludzi."
         )
 
-        settings = self.settings_ui(None)
+        settings = self.settings_ui(None, key_prefix="guard")
         model = self.analytics.build_model(settings.rolling_window)
         guard = ErrorKillerAI()
 
@@ -2213,14 +2214,16 @@ class LottoApp:
             "Anty-Powtórkę 999 i wskaźnik jakości 0–100, a potem pokazuje wyłącznie TOP selekcję."
         )
 
-        settings = self.settings_ui(self.memory.dna_player() if self.memory.dna_player().get("ready") else None)
+        dna_cached = self.memory.dna_player()
+        settings = self.settings_ui(dna_cached if dna_cached.get("ready") else None, key_prefix="final_lab")
         model = self.analytics.build_model(settings.rolling_window)
 
-        top_count = st.slider("Ile kuponów TOP pokazać?", 1, 10, 3)
+        top_count = st.slider("Ile kuponów TOP pokazać?", 1, 10, 3, key="final_lab_top_count")
         style = st.selectbox(
             "Styl bazowy",
             ["Anty-Błąd PRO", "Elitarny", "A/B: Bezpieczny balans", "A/B: Kontrtrend", "Eksperymentalny: Hybryda"],
             index=0,
+            key="final_lab_style",
         )
 
         if st.button("🏆 Generuj TOP FINAL", use_container_width=True, type="primary"):
