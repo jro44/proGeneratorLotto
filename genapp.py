@@ -1734,7 +1734,7 @@ class LottoApp:
                 help="Plik musi być w repozytorium/folderze aplikacji. Aplikacja próbuje znaleźć .pdf i .PDF bez względu na wielkość liter.",
             )
 
-            if st.button("🔄 Wyczyść cache i odśwież", use_container_width=True):
+            if st.button("🔄 Wyczyść cache i odśwież", width='stretch'):
                 st.cache_data.clear()
                 st.rerun()
 
@@ -1886,7 +1886,7 @@ class LottoApp:
             return
 
         st.subheader("✅ Kupony")
-        st.dataframe(result, use_container_width=True, hide_index=True)
+        st.dataframe(result, width='stretch', hide_index=True)
 
         if "Jakość_FINAL_0_100" in result.columns:
             best_final = float(result["Jakość_FINAL_0_100"].max())
@@ -1901,9 +1901,9 @@ class LottoApp:
 
         c1, c2 = st.columns(2)
         with c1:
-            st.download_button("⬇️ CSV", result.to_csv(index=False).encode("utf-8-sig"), "kupony_lotto_ai.csv", "text/csv", use_container_width=True)
+            st.download_button("⬇️ CSV", result.to_csv(index=False).encode("utf-8-sig"), "kupony_lotto_ai.csv", "text/csv", width='stretch')
         with c2:
-            if st.button("💾 Zapisz do pamięci AI", use_container_width=True):
+            if st.button("💾 Zapisz do pamięci AI", width='stretch'):
                 saved = self.memory.save_generated(result, settings, source)
                 st.success(f"Zapisano {saved} kuponów.")
 
@@ -1928,11 +1928,11 @@ class LottoApp:
 
         c1, c2, c3 = st.columns(3)
         with c1:
-            run = st.button("🛡️ Anty-Błąd PRO", use_container_width=True, type="primary")
+            run = st.button("🛡️ Anty-Błąd PRO", width='stretch', type="primary")
         with c2:
-            elite = st.button("💎 Elitarny", use_container_width=True)
+            elite = st.button("💎 Elitarny", width='stretch')
         with c3:
-            ab = st.button("🧪 Test A/B", use_container_width=True)
+            ab = st.button("🧪 Test A/B", width='stretch')
 
         if run:
             result = self.generator.generate(settings.count, settings, model, "Anty-Błąd PRO", st.session_state.get("risk_profile_final", "🟡 Zrównoważony"))
@@ -1968,16 +1968,16 @@ class LottoApp:
 
         e1, e2 = st.columns(2)
         with e1:
-            draw_id = st.number_input("Numer losowania", min_value=1, value=default_draw, key="manual_draw_id")
+            draw_id = st.number_input("Numer losowania", min_value=1, value=default_draw, key="evaluate_draw_id")
         with e2:
-            draw_text = st.text_input("Wynik losowania", value=default_nums)
+            draw_text = st.text_input("Wynik losowania", value=default_nums, key="evaluate_draw_text")
 
         draw_nums = parse_number_list(draw_text)
 
         if len(draw_nums) != DRAW_SIZE:
             st.warning("Wpisz dokładnie 6 liczb.")
         else:
-            if st.button("✅ Oceń zapisane kupony", use_container_width=True, type="primary"):
+            if st.button("✅ Oceń zapisane kupony", width='stretch', type="primary"):
                 count = self.memory.evaluate_pending(int(draw_id), draw_nums)
                 st.success(f"Oceniono {count} kuponów.")
 
@@ -1986,13 +1986,13 @@ class LottoApp:
         if summary.empty:
             st.info("Brak ocenionych kuponów.")
         else:
-            st.dataframe(summary, use_container_width=True, hide_index=True)
+            st.dataframe(summary, width='stretch', hide_index=True)
 
         with st.expander("Zapisane kupony", expanded=False):
-            st.dataframe(generated, use_container_width=True, hide_index=True)
+            st.dataframe(generated, width='stretch', hide_index=True)
 
         with st.expander("Ocenione kupony", expanded=False):
-            st.dataframe(evaluated, use_container_width=True, hide_index=True)
+            st.dataframe(evaluated, width='stretch', hide_index=True)
 
     def tab_dna(self):
         st.header("🧠 DNA Gracza")
@@ -2037,7 +2037,7 @@ class LottoApp:
         model = self.analytics.build_model(settings.rolling_window)
         mode = st.selectbox("Tryb", ["Gorące", "Zimne", "Hybryda", "Losowe kontrolowane"], key="experiments_mode")
 
-        if st.button("🧪 Generuj eksperymentalnie", use_container_width=True):
+        if st.button("🧪 Generuj eksperymentalnie", width='stretch'):
             result = self.generator.generate(settings.count, settings, model, f"Eksperymentalny: {mode}", st.session_state.get("risk_profile_final", "🔴 Agresywny"))
             self.show_result(result, settings, f"Eksperymentalny: {mode}")
 
@@ -2094,7 +2094,7 @@ class LottoApp:
             st.metric("Trafienia", f"{hits}/6")
             st.markdown(ticket_html(ticket, "Twój kupon: " + " ".join(f"{n:02d}" for n in ticket)), unsafe_allow_html=True)
 
-            if st.button("💾 Zapisz sprawdzenie do DNA Gracza", use_container_width=True, type="primary"):
+            if st.button("💾 Zapisz sprawdzenie do DNA Gracza", width='stretch', type="primary"):
                 ok = self.memory.save_manual_check(
                     module=module,
                     ticket=ticket,
@@ -2160,7 +2160,7 @@ class LottoApp:
         with st.expander("Tabela modułów Autopilota", expanded=False):
             table = recommendation.get("module_table")
             if isinstance(table, pd.DataFrame):
-                st.dataframe(table, use_container_width=True, hide_index=True)
+                st.dataframe(table, width='stretch', hide_index=True)
 
         st.info(
             "Najlepsza praktyka: korzystaj z rekomendacji dopiero po minimum 20 ocenionych kuponach. "
@@ -2226,7 +2226,7 @@ class LottoApp:
             key="final_lab_style",
         )
 
-        if st.button("🏆 Generuj TOP FINAL", use_container_width=True, type="primary"):
+        if st.button("🏆 Generuj TOP FINAL", width='stretch', type="primary"):
             lab_settings = GeneratorSettings(
                 **{
                     **asdict(settings),
@@ -2252,14 +2252,14 @@ class LottoApp:
 
         c1, c2 = st.columns(2)
         with c1:
-            st.dataframe(freq, use_container_width=True, hide_index=True)
+            st.dataframe(freq, width='stretch', hide_index=True)
         with c2:
             st.bar_chart(freq.sort_values("Liczba").set_index("Liczba")["Wystąpienia"])
 
         display = self.df.copy()
         display["Liczby"] = display[self.columns].apply(lambda r: " ".join(f"{int(x):02d}" for x in r), axis=1)
         st.subheader("Archiwum")
-        st.dataframe(display[["Losowanie", "Liczby", "Suma", "Parzyste", "Nieparzyste", "Niskie_1_24", "Wysokie_25_49"]], use_container_width=True, hide_index=True)
+        st.dataframe(display[["Losowanie", "Liczby", "Suma", "Parzyste", "Nieparzyste", "Niskie_1_24", "Wysokie_25_49"]], width='stretch', hide_index=True)
 
     def tab_guide(self):
         st.header("📘 Instrukcja")
