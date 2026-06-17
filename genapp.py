@@ -1972,6 +1972,8 @@ class LottoApp:
             return
 
         self._remember_result(result, settings, source)
+        safe_source_key = re.sub(r"[^a-zA-Z0-9_]+", "_", str(source))
+        unique_result_key = f"{safe_source_key}_{time.time_ns()}"
 
         st.subheader("✅ Kupony")
         st.dataframe(result, width="stretch", hide_index=True)
@@ -1985,13 +1987,13 @@ class LottoApp:
             )
 
         text = "\n".join(f"{row['Moduł']}: {row['Zestaw']} | jakość={row['Jakość']} | suma={row['Suma']}" for _, row in result.iterrows())
-        st.text_area("Kopiuj kupony", text, height=130, key=f"copy_area_{source}_{int(time.time())}")
+        st.text_area("Kopiuj kupony", text, height=130, key=f"copy_area_{unique_result_key}")
 
         c1, c2 = st.columns(2)
         with c1:
-            st.download_button("⬇️ CSV", result.to_csv(index=False).encode("utf-8-sig"), "kupony_lotto_ai.csv", "text/csv", width="stretch", key=f"download_{source}_{int(time.time())}")
+            st.download_button("⬇️ CSV", result.to_csv(index=False).encode("utf-8-sig"), "kupony_lotto_ai.csv", "text/csv", width="stretch", key=f"download_{unique_result_key}")
         with c2:
-            if st.button("💾 Zapisz teraz do Firebase/DNA AI", width="stretch", key=f"save_now_{source}_{int(time.time())}"):
+            if st.button("💾 Zapisz teraz do Firebase/DNA AI", width="stretch", key=f"save_now_{unique_result_key}"):
                 saved = self.memory.save_generated(result, settings, source)
                 if saved > 0:
                     st.success(f"Zapisano {saved} kuponów.")
@@ -2003,7 +2005,6 @@ class LottoApp:
             nums = parse_number_list(str(row["Zestaw"]))
             st.markdown(ticket_html(nums, f"{row['Moduł']}: {row['Zestaw']}"), unsafe_allow_html=True)
 
-        safe_source_key = re.sub(r"[^a-zA-Z0-9_]+", "_", str(source))
         self.render_persistent_save_panel(key_prefix=f"show_{safe_source_key}")
         self.firebase_debug_panel(key_prefix=f"show_{safe_source_key}")
 
@@ -2042,9 +2043,8 @@ class LottoApp:
             result = self.generator.generate_ab(settings, model)
             self.show_result(result, settings, "Test A/B")
 
-        safe_source_key = re.sub(r"[^a-zA-Z0-9_]+", "_", str(source))
-        self.render_persistent_save_panel(key_prefix=f"show_{safe_source_key}")
-        self.firebase_debug_panel(key_prefix=f"show_{safe_source_key}")
+        self.render_persistent_save_panel(key_prefix="generator_tab")
+        self.firebase_debug_panel(key_prefix="generator_tab")
 
     def tab_evaluate(self):
         st.header("📊 Ocena kuponów i Liga Modułów")
@@ -2140,9 +2140,8 @@ class LottoApp:
             result = self.generator.generate(settings.count, settings, model, f"Eksperymentalny: {mode}", st.session_state.get("risk_profile_final", "🔴 Agresywny"))
             self.show_result(result, settings, f"Eksperymentalny: {mode}")
 
-        safe_source_key = re.sub(r"[^a-zA-Z0-9_]+", "_", str(source))
-        self.render_persistent_save_panel(key_prefix=f"show_{safe_source_key}")
-        self.firebase_debug_panel(key_prefix=f"show_{safe_source_key}")
+        self.render_persistent_save_panel(key_prefix="experiments_tab")
+        self.firebase_debug_panel(key_prefix="experiments_tab")
 
 
     def tab_manual_check(self):
@@ -2347,9 +2346,8 @@ class LottoApp:
             )
             self.show_result(result, lab_settings, "Laboratorium FINAL TOP")
 
-        safe_source_key = re.sub(r"[^a-zA-Z0-9_]+", "_", str(source))
-        self.render_persistent_save_panel(key_prefix=f"show_{safe_source_key}")
-        self.firebase_debug_panel(key_prefix=f"show_{safe_source_key}")
+        self.render_persistent_save_panel(key_prefix="generator_tab")
+        self.firebase_debug_panel(key_prefix="generator_tab")
 
 
     def tab_stats(self):
