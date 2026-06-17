@@ -1,5 +1,5 @@
-# generator_lotto_649_antyblad_pro_ai_v2.py
-# Lotto 6/49 Laboratorium Anty-Błąd PRO AI v2
+# generator_lotto_649_antyblad_pro_ai_FINAL.py
+# Lotto 6/49 Laboratorium Anty-Błąd PRO AI FINAL
 #
 # Co robi ta wersja:
 # - czyta plik Wyniki060626.pdf / Wyniki060626.PDF z historią Lotto 6/49,
@@ -73,7 +73,7 @@ except Exception:
 # KONFIGURACJA
 # ============================================================
 
-APP_NAME = "Lotto 6/49 Laboratorium Anty-Błąd PRO AI v2"
+APP_NAME = "Lotto 6/49 Laboratorium Anty-Błąd PRO AI FINAL"
 DEFAULT_PDF_NAME = "Wyniki060626.pdf"
 
 NUMBER_MIN = 1
@@ -833,6 +833,260 @@ class LottoAnalytics:
         }
 
 
+
+# ============================================================
+# STRAŻNIK BŁĘDÓW AI + RYZYKO + ANTY-POWTÓRKA 999
+# ============================================================
+
+class ErrorKillerAI:
+    """
+    Strażnik Błędów AI.
+    Nie próbuje przewidzieć przyszłości.
+    Jego zadanie: eliminować układy, które są słabe jakościowo,
+    zbyt skrajne albo zbyt podobne do błędnych schematów.
+    """
+
+    @staticmethod
+    def risk_profile_settings(profile: str) -> Dict[str, Any]:
+        """
+        Profile ryzyka:
+        - Bezpieczny: mocna kontrola jakości, mniej skrajności.
+        - Zrównoważony: najlepszy kompromis.
+        - Agresywny: większa zmienność, ale nadal z ochroną przed głupimi układami.
+        """
+        if profile == "🟢 Bezpieczny":
+            return {
+                "sum_min": 120,
+                "sum_max": 175,
+                "even_min": 2,
+                "even_max": 4,
+                "low_min": 2,
+                "low_max": 4,
+                "max_chain": 2,
+                "max_one_sector": 2,
+                "max_from_latest": 1,
+                "max_similarity_999": 3,
+                "candidate_multiplier": 1.20,
+                "quality_floor": 72,
+            }
+
+        if profile == "🔴 Agresywny":
+            return {
+                "sum_min": 95,
+                "sum_max": 205,
+                "even_min": 1,
+                "even_max": 5,
+                "low_min": 1,
+                "low_max": 5,
+                "max_chain": 3,
+                "max_one_sector": 3,
+                "max_from_latest": 3,
+                "max_similarity_999": 4,
+                "candidate_multiplier": 1.60,
+                "quality_floor": 60,
+            }
+
+        return {
+            "sum_min": 110,
+            "sum_max": 190,
+            "even_min": 2,
+            "even_max": 4,
+            "low_min": 2,
+            "low_max": 4,
+            "max_chain": 2,
+            "max_one_sector": 2,
+            "max_from_latest": 2,
+            "max_similarity_999": 3,
+            "candidate_multiplier": 1.35,
+            "quality_floor": 66,
+        }
+
+    @staticmethod
+    def max_historical_similarity(ticket: Sequence[int], historical_draws: Sequence[Sequence[int]]) -> int:
+        ticket_set = set(map(int, ticket))
+        best = 0
+
+        for draw in historical_draws:
+            best = max(best, len(ticket_set.intersection(set(map(int, draw)))))
+
+        return int(best)
+
+    @staticmethod
+    def count_hot_cold(ticket: Sequence[int], frequency_table: pd.DataFrame) -> Tuple[int, int]:
+        state_map = frequency_table.set_index("Liczba")["Stan"].to_dict()
+        hot = sum(state_map.get(int(n), "Neutralna") == "Gorąca" for n in ticket)
+        cold = sum(state_map.get(int(n), "Neutralna") == "Zimna" for n in ticket)
+        return int(hot), int(cold)
+
+    @staticmethod
+    def human_pattern_penalty(ticket: Sequence[int]) -> float:
+        """
+        Kara za układy, które ludzie często wybierają:
+        - same końcówki,
+        - za dużo liczb z jednej dziesiątki,
+        - schodki,
+        - zbyt estetyczne układy.
+        """
+        nums = sorted(map(int, ticket))
+        penalty = 0.0
+
+        last_digits = [n % 10 for n in nums]
+        if len(set(last_digits)) <= 3:
+            penalty += 8.0
+
+        decades = [
+            sum(1 <= n <= 9 for n in nums),
+            sum(10 <= n <= 19 for n in nums),
+            sum(20 <= n <= 29 for n in nums),
+            sum(30 <= n <= 39 for n in nums),
+            sum(40 <= n <= 49 for n in nums),
+        ]
+        if max(decades) >= 4:
+            penalty += 10.0
+
+        diffs = [nums[i + 1] - nums[i] for i in range(len(nums) - 1)]
+        if len(set(diffs)) <= 2:
+            penalty += 6.0
+
+        if all(n <= 31 for n in nums):
+            penalty += 5.0
+
+        if sum(1 for n in nums if n in {7, 13, 21, 22, 23, 24, 31, 37, 42, 49}) >= 4:
+            penalty += 5.0
+
+        return float(penalty)
+
+    def inspect(
+        self,
+        ticket: Sequence[int],
+        analytics: "LottoAnalytics",
+        model: PreparedModel,
+        settings: GeneratorSettings,
+        risk_profile: str,
+    ) -> Dict[str, Any]:
+        nums = sorted(map(int, ticket))
+        historical_draws = [tuple(map(int, row)) for row in analytics.df[analytics.columns].to_numpy()]
+        similarity = self.max_historical_similarity(nums, historical_draws)
+        hot, cold = self.count_hot_cold(nums, model.frequency_table)
+        sectors = analytics.sectors(nums)
+        chain = analytics.consecutive_chain(nums)
+        even = sum(n % 2 == 0 for n in nums)
+        low = sum(n <= 24 for n in nums)
+        total = sum(nums)
+        latest_overlap = len(set(nums).intersection(set(model.latest_draw)))
+        profile = self.risk_profile_settings(risk_profile)
+
+        reasons: List[str] = []
+        passed = True
+
+        if total < profile["sum_min"] or total > profile["sum_max"]:
+            passed = False
+            reasons.append(f"suma poza profilem ryzyka ({total})")
+
+        if even < profile["even_min"] or even > profile["even_max"]:
+            passed = False
+            reasons.append(f"zły balans parzystych ({even})")
+
+        if low < profile["low_min"] or low > profile["low_max"]:
+            passed = False
+            reasons.append(f"zły balans niskich ({low})")
+
+        if chain > profile["max_chain"]:
+            passed = False
+            reasons.append(f"za długi ciąg kolejnych liczb ({chain})")
+
+        if max(sectors) > profile["max_one_sector"]:
+            passed = False
+            reasons.append(f"za dużo liczb z jednego sektora ({max(sectors)})")
+
+        if latest_overlap > profile["max_from_latest"]:
+            passed = False
+            reasons.append(f"za dużo powtórek z ostatniego losowania ({latest_overlap})")
+
+        if similarity > profile["max_similarity_999"]:
+            passed = False
+            reasons.append(f"zbyt podobny do jednego z 999 losowań ({similarity}/6)")
+
+        if hot >= 5:
+            passed = False
+            reasons.append("za dużo liczb gorących")
+
+        if cold >= 5:
+            passed = False
+            reasons.append("za dużo liczb zimnych")
+
+        if not reasons:
+            reasons.append("kupon przeszedł kontrolę Strażnika Błędów AI")
+
+        human_penalty = self.human_pattern_penalty(nums)
+
+        return {
+            "passed": bool(passed),
+            "reasons": reasons,
+            "max_similarity_999": int(similarity),
+            "hot_count": int(hot),
+            "cold_count": int(cold),
+            "human_pattern_penalty": round(float(human_penalty), 2),
+            "risk_profile": risk_profile,
+        }
+
+
+class FinalQualityIndex:
+    """
+    Inteligentny wskaźnik jakości 0–100.
+    Nie oznacza gwarancji trafienia.
+    Oznacza jakość kuponu według filtrów, balansu, historii i Strażnika Błędów AI.
+    """
+
+    @staticmethod
+    def calculate(
+        meta: Dict[str, Any],
+        guard: Dict[str, Any],
+        settings: GeneratorSettings,
+    ) -> float:
+        base = 58.0
+
+        # Jakość modelu.
+        quality = float(meta.get("Jakość", 0))
+        base += min(18.0, quality / 6.0)
+
+        # Historia.
+        base += min(10.0, float(meta.get("Wynik_historyczny", 0)) / 10.0)
+        base += min(4.0, float(meta.get("Trafienia_3+", 0)) / 40.0)
+
+        # Balans sumy.
+        total = int(meta.get("Suma", 0))
+        center = (settings.sum_min + settings.sum_max) / 2
+        width = max(1, (settings.sum_max - settings.sum_min) / 2)
+        sum_balance = max(0.0, 1.0 - abs(total - center) / width)
+        base += sum_balance * 8.0
+
+        # Kary Strażnika.
+        if not guard.get("passed", False):
+            base -= 14.0
+
+        base -= float(guard.get("human_pattern_penalty", 0)) * 0.7
+        base -= max(0, int(guard.get("max_similarity_999", 0)) - 3) * 7.0
+        base -= max(0, int(guard.get("hot_count", 0)) - 4) * 5.0
+        base -= max(0, int(guard.get("cold_count", 0)) - 4) * 5.0
+
+        return round(float(max(0.0, min(100.0, base))), 2)
+
+    @staticmethod
+    def label(value: float) -> str:
+        if value >= 90:
+            return "wybitny"
+        if value >= 80:
+            return "bardzo mocny"
+        if value >= 70:
+            return "mocny"
+        if value >= 60:
+            return "dobry"
+        if value >= 50:
+            return "ryzykowny"
+        return "odradzany"
+
+
 # ============================================================
 # GENERATOR
 # ============================================================
@@ -870,14 +1124,34 @@ class LottoGenerator:
         weights /= weights.sum()
         return weights
 
-    def generate(self, count: int, settings: GeneratorSettings, model: PreparedModel, style: str) -> pd.DataFrame:
+    def generate(
+        self,
+        count: int,
+        settings: GeneratorSettings,
+        model: PreparedModel,
+        style: str,
+        risk_profile: str = "🟡 Zrównoważony",
+        final_mode: bool = True,
+    ) -> pd.DataFrame:
         rng = np.random.default_rng()
         all_numbers = list(range(NUMBER_MIN, NUMBER_MAX + 1))
         weights = self._weights_for_style(model, style)
 
-        attempts = max(settings.candidate_attempts, count * 250)
+        guard_engine = ErrorKillerAI()
+        profile = guard_engine.risk_profile_settings(risk_profile)
+
+        attempts = max(
+            int(settings.candidate_attempts * profile["candidate_multiplier"]),
+            count * 300,
+            1000,
+        )
+
+        # W FINAL trybie generator robi dużą pulę kandydatów, a potem wybiera TOP.
+        if final_mode:
+            attempts = max(attempts, 1000)
+
         seen: set[Tuple[int, ...]] = set()
-        candidates: List[Tuple[float, Tuple[int, ...], Dict[str, Any]]] = []
+        candidates: List[Tuple[float, Tuple[int, ...], Dict[str, Any], Dict[str, Any]]] = []
 
         for _ in range(attempts):
             ticket = self.weighted_sample(all_numbers, weights, DRAW_SIZE, rng)
@@ -891,19 +1165,63 @@ class LottoGenerator:
                 continue
 
             meta = self.analytics.quality_score(ticket, model, settings)
-            candidates.append((float(meta["Jakość"]), ticket, meta))
+            guard = guard_engine.inspect(ticket, self.analytics, model, settings, risk_profile)
+            final_quality = FinalQualityIndex.calculate(meta, guard, settings)
+
+            # Strażnik nie musi zawsze odrzucać agresywne kupony, ale obniża ich jakość.
+            # W profilu bezpiecznym i zrównoważonym pokazujemy tylko te, które przeszły kontrolę.
+            if risk_profile in ("🟢 Bezpieczny", "🟡 Zrównoważony") and not guard["passed"]:
+                continue
+
+            if final_quality < profile["quality_floor"]:
+                continue
+
+            meta["Jakość_FINAL_0_100"] = final_quality
+            meta["Ocena_FINAL"] = FinalQualityIndex.label(final_quality)
+            meta["Profil_ryzyka"] = risk_profile
+            meta["Podobieństwo_999"] = int(guard["max_similarity_999"])
+            meta["Gorące_w_kuponie"] = int(guard["hot_count"])
+            meta["Zimne_w_kuponie"] = int(guard["cold_count"])
+            meta["Kara_wzoru_ludzkiego"] = float(guard["human_pattern_penalty"])
+            meta["Strażnik_AI"] = "OK" if guard["passed"] else "RYZYKO"
+            meta["Uwagi_strażnika"] = "; ".join(guard["reasons"])
+
+            candidates.append((final_quality, ticket, meta, guard))
 
         if not candidates:
-            for _ in range(1000):
-                ticket = tuple(sorted(rng.choice(np.arange(NUMBER_MIN, NUMBER_MAX + 1), size=DRAW_SIZE, replace=False).tolist()))
-                meta = self.analytics.quality_score(ticket, model, settings)
-                candidates.append((float(meta["Jakość"]), ticket, meta))
+            # Awaryjnie: jeśli ustawienia są zbyt ciasne, generujemy kandydatów i wybieramy najlepszych bez twardego floor.
+            for _ in range(max(1200, count * 250)):
+                ticket = self.weighted_sample(all_numbers, weights, DRAW_SIZE, rng)
 
-        candidates.sort(reverse=True, key=lambda x: x[0])
+                if ticket in seen:
+                    continue
+
+                seen.add(ticket)
+                meta = self.analytics.quality_score(ticket, model, settings)
+                guard = guard_engine.inspect(ticket, self.analytics, model, settings, risk_profile)
+                final_quality = FinalQualityIndex.calculate(meta, guard, settings)
+
+                meta["Jakość_FINAL_0_100"] = final_quality
+                meta["Ocena_FINAL"] = FinalQualityIndex.label(final_quality)
+                meta["Profil_ryzyka"] = risk_profile
+                meta["Podobieństwo_999"] = int(guard["max_similarity_999"])
+                meta["Gorące_w_kuponie"] = int(guard["hot_count"])
+                meta["Zimne_w_kuponie"] = int(guard["cold_count"])
+                meta["Kara_wzoru_ludzkiego"] = float(guard["human_pattern_penalty"])
+                meta["Strażnik_AI"] = "OK" if guard["passed"] else "RYZYKO"
+                meta["Uwagi_strażnika"] = "; ".join(guard["reasons"])
+                candidates.append((final_quality, ticket, meta, guard))
+
+        candidates.sort(reverse=True, key=lambda x: (x[0], float(x[2].get("Jakość", 0))))
 
         rows: List[Dict[str, Any]] = []
+        used: set[Tuple[int, ...]] = set()
 
-        for _, ticket, meta in candidates[:count]:
+        for _, ticket, meta, _ in candidates:
+            if ticket in used:
+                continue
+
+            used.add(ticket)
             rows.append(
                 {
                     "Moduł": style,
@@ -912,13 +1230,16 @@ class LottoGenerator:
                 }
             )
 
+            if len(rows) >= count:
+                break
+
         return pd.DataFrame(rows).reset_index(drop=True)
 
     def generate_ab(self, settings: GeneratorSettings, model: PreparedModel) -> pd.DataFrame:
         frames = [
-            self.generate(1, settings, model, "A/B: Bezpieczny balans"),
-            self.generate(1, settings, model, "A/B: Kontrtrend"),
-            self.generate(1, settings, model, "A/B: Elitarny"),
+            self.generate(1, settings, model, "A/B: Bezpieczny balans", "🟢 Bezpieczny"),
+            self.generate(1, settings, model, "A/B: Kontrtrend", "🟡 Zrównoważony"),
+            self.generate(1, settings, model, "A/B: Elitarny", "🔴 Agresywny"),
         ]
         result = pd.concat(frames, ignore_index=True)
         result.insert(0, "Wariant", ["A", "B", "C"][:len(result)])
@@ -1142,6 +1463,194 @@ class LearningMemory:
         }
 
 
+
+    def save_manual_check(
+        self,
+        module: str,
+        ticket: Sequence[int],
+        draw_id: int,
+        draw_numbers: Sequence[int],
+        settings_note: str = "",
+    ) -> bool:
+        """
+        Ręczny zapis kuponu użytkownika.
+        To jest serce Kroku 3: AI uczy się wyłącznie z kuponów,
+        które użytkownik faktycznie chce sprawdzić/zapisać.
+        """
+        ticket_tuple = tuple(sorted(map(int, ticket)))
+        draw_tuple = tuple(sorted(map(int, draw_numbers)))
+        hits = len(set(ticket_tuple).intersection(set(draw_tuple)))
+
+        even = sum(n % 2 == 0 for n in ticket_tuple)
+        low = sum(n <= 24 for n in ticket_tuple)
+        sectors = [
+            sum(1 <= n <= 10 for n in ticket_tuple),
+            sum(11 <= n <= 20 for n in ticket_tuple),
+            sum(21 <= n <= 30 for n in ticket_tuple),
+            sum(31 <= n <= 40 for n in ticket_tuple),
+            sum(41 <= n <= 49 for n in ticket_tuple),
+        ]
+
+        item = {
+            "evaluated_at": now_string(),
+            "module": module,
+            "source": "manual_check",
+            "ticket": " ".join(f"{n:02d}" for n in ticket_tuple),
+            "draw_id": int(draw_id),
+            "draw_numbers": " ".join(f"{n:02d}" for n in draw_tuple),
+            "hits": int(hits),
+            "settings": {"note": settings_note, "source": "manual_check"},
+            "quality": 0.0,
+            "sum": int(sum(ticket_tuple)),
+            "even": int(even),
+            "low": int(low),
+            "sectors": "-".join(str(x) for x in sectors),
+        }
+
+        if self.backend.enabled:
+            return self.backend.add_document("evaluated_tickets", item)
+
+        old = pd.read_csv(LOCAL_EVALUATED_LOG) if LOCAL_EVALUATED_LOG.exists() else pd.DataFrame()
+        new = pd.concat([old, pd.DataFrame([item])], ignore_index=True)
+        new.to_csv(LOCAL_EVALUATED_LOG, index=False, encoding="utf-8-sig")
+        return True
+
+    def effectiveness_center(self) -> Dict[str, Any]:
+        """
+        Centrum Skuteczności:
+        podsumowanie całej historii ocenionych kuponów.
+        """
+        df = self.load_evaluated()
+
+        if df.empty:
+            return {
+                "ready": False,
+                "total": 0,
+                "message": "Brak ocenionych kuponów.",
+            }
+
+        df["hits"] = pd.to_numeric(df["hits"], errors="coerce").fillna(0).astype(int)
+
+        hit_counts = {f"{i}_trafień": int((df["hits"] == i).sum()) for i in range(0, 7)}
+        total = int(len(df))
+        avg = round(float(df["hits"].mean()), 3)
+        max_hits = int(df["hits"].max())
+
+        hit_2_plus = int((df["hits"] >= 2).sum())
+        hit_3_plus = int((df["hits"] >= 3).sum())
+        hit_4_plus = int((df["hits"] >= 4).sum())
+
+        # Współczynnik opłacalności nie oznacza finansowej gwarancji.
+        # To syntetyczna miara jakości Twoich zapisanych strategii.
+        profitability = (
+            avg * 22
+            + (hit_2_plus / max(1, total)) * 22
+            + (hit_3_plus / max(1, total)) * 32
+            + (hit_4_plus / max(1, total)) * 60
+            + max_hits * 4
+        )
+        profitability = round(float(max(0, min(100, profitability))), 2)
+
+        return {
+            "ready": True,
+            "total": total,
+            "avg_hits": avg,
+            "max_hits": max_hits,
+            "hit_counts": hit_counts,
+            "hit_2_plus": hit_2_plus,
+            "hit_3_plus": hit_3_plus,
+            "hit_4_plus": hit_4_plus,
+            "profitability_index": profitability,
+        }
+
+    def autopilot_recommendation(self) -> Dict[str, Any]:
+        """
+        Autopilot AI v1:
+        na podstawie ocenionych kuponów wybiera moduł i ustawienia,
+        które najczęściej wypadały najlepiej.
+        """
+        df = self.load_evaluated()
+
+        if df.empty:
+            return {
+                "ready": False,
+                "message": "Autopilot potrzebuje ocenionych kuponów. Minimum praktyczne: 20, sensownie: 50+.",
+            }
+
+        df["hits"] = pd.to_numeric(df["hits"], errors="coerce").fillna(0).astype(int)
+        df["sum"] = pd.to_numeric(df.get("sum", pd.Series([0] * len(df))), errors="coerce").fillna(0).astype(int)
+        df["even"] = pd.to_numeric(df.get("even", pd.Series([0] * len(df))), errors="coerce").fillna(0).astype(int)
+        df["low"] = pd.to_numeric(df.get("low", pd.Series([0] * len(df))), errors="coerce").fillna(0).astype(int)
+
+        module_summary = (
+            df.groupby("module")
+            .agg(
+                attempts=("hits", "count"),
+                avg_hits=("hits", "mean"),
+                max_hits=("hits", "max"),
+                hit_2_plus=("hits", lambda x: int((x >= 2).sum())),
+                hit_3_plus=("hits", lambda x: int((x >= 3).sum())),
+            )
+            .reset_index()
+        )
+
+        if module_summary.empty:
+            return {
+                "ready": False,
+                "message": "Brak danych modułów.",
+            }
+
+        module_summary["score"] = (
+            module_summary["avg_hits"] * 40
+            + module_summary["hit_2_plus"] / module_summary["attempts"].clip(lower=1) * 25
+            + module_summary["hit_3_plus"] / module_summary["attempts"].clip(lower=1) * 45
+            + module_summary["max_hits"] * 4
+        )
+
+        module_summary = module_summary.sort_values("score", ascending=False).reset_index(drop=True)
+        best = module_summary.iloc[0]
+
+        # Dobre kupony definiujemy względnie, żeby działało także przy małej próbie.
+        threshold = max(2, int(df["hits"].quantile(0.70)))
+        good = df[df["hits"] >= threshold].copy()
+
+        if good.empty:
+            good = df.copy()
+
+        sum_min = int(max(21, good["sum"].quantile(0.20)))
+        sum_max = int(min(294, good["sum"].quantile(0.80)))
+        even_mode = int(good["even"].mode().iloc[0]) if not good["even"].mode().empty else 3
+        low_mode = int(good["low"].mode().iloc[0]) if not good["low"].mode().empty else 3
+
+        samples = int(len(df))
+        if samples >= 80:
+            confidence = "wysoka"
+        elif samples >= 35:
+            confidence = "średnia"
+        elif samples >= 10:
+            confidence = "wstępna"
+        else:
+            confidence = "bardzo niska"
+
+        weak_modules = module_summary.tail(min(3, len(module_summary))).copy()
+        weak_list = weak_modules["module"].astype(str).tolist()
+
+        return {
+            "ready": True,
+            "samples": samples,
+            "confidence": confidence,
+            "best_module": str(best["module"]),
+            "best_score": round(float(best["score"]), 2),
+            "best_avg_hits": round(float(best["avg_hits"]), 3),
+            "best_max_hits": int(best["max_hits"]),
+            "recommended_sum_min": sum_min,
+            "recommended_sum_max": sum_max,
+            "recommended_even": even_mode,
+            "recommended_low": low_mode,
+            "weak_modules": weak_list,
+            "module_table": module_summary,
+        }
+
 # ============================================================
 # UI
 # ============================================================
@@ -1250,7 +1759,7 @@ class LottoApp:
             st.stop()
 
     def render_header(self):
-        st.title("🧠 Lotto 6/49 Anty-Błąd PRO AI v2")
+        st.title("🧠 Lotto 6/49 Anty-Błąd PRO AI FINAL")
         st.info(
             "To nie jest magiczny przewidywacz. To system uczący się na Twoich realnych wynikach: "
             "zapisuje kupony, ocenia trafienia, buduje DNA Gracza i rekomenduje strategie, które faktycznie działają najlepiej u Ciebie."
@@ -1331,6 +1840,19 @@ class LottoApp:
         profile = st.selectbox("Profil pracy", ["Ekspres", "Szybki PRO", "Dokładny"], index=1)
         attempts = {"Ekspres": 800, "Szybki PRO": 1800, "Dokładny": 4000}[profile]
 
+        risk_profile = st.selectbox(
+            "Poziom ryzyka Strażnika AI",
+            ["🟢 Bezpieczny", "🟡 Zrównoważony", "🔴 Agresywny"],
+            index=1,
+            help=(
+                "Bezpieczny: najmocniejsza kontrola jakości. "
+                "Zrównoważony: najlepszy kompromis. "
+                "Agresywny: większa zmienność, ale nadal z kontrolą błędów."
+            ),
+        )
+
+        st.session_state["risk_profile_final"] = risk_profile
+
         if sum_min > sum_max:
             sum_min, sum_max = sum_max, sum_min
 
@@ -1364,6 +1886,14 @@ class LottoApp:
 
         st.subheader("✅ Kupony")
         st.dataframe(result, use_container_width=True, hide_index=True)
+
+        if "Jakość_FINAL_0_100" in result.columns:
+            best_final = float(result["Jakość_FINAL_0_100"].max())
+            st.success(
+                f"Najlepszy wskaźnik jakości FINAL: {best_final}/100 — "
+                f"{FinalQualityIndex.label(best_final)}. "
+                "To nie jest gwarancja trafienia, tylko ocena jakości kuponu po Strażniku AI."
+            )
 
         text = "\n".join(f"{row['Moduł']}: {row['Zestaw']} | jakość={row['Jakość']} | suma={row['Suma']}" for _, row in result.iterrows())
         st.text_area("Kopiuj kupony", text, height=130)
@@ -1404,12 +1934,12 @@ class LottoApp:
             ab = st.button("🧪 Test A/B", use_container_width=True)
 
         if run:
-            result = self.generator.generate(settings.count, settings, model, "Anty-Błąd PRO")
+            result = self.generator.generate(settings.count, settings, model, "Anty-Błąd PRO", st.session_state.get("risk_profile_final", "🟡 Zrównoważony"))
             self.show_result(result, settings, "Anty-Błąd PRO")
 
         if elite:
             elite_settings = GeneratorSettings(**{**asdict(settings), "count": 1, "candidate_attempts": max(3500, settings.candidate_attempts * 2)})
-            result = self.generator.generate(1, elite_settings, model, "Elitarny")
+            result = self.generator.generate(1, elite_settings, model, "Elitarny", st.session_state.get("risk_profile_final", "🟡 Zrównoważony"))
             self.show_result(result, elite_settings, "Elitarny")
 
         if ab:
@@ -1507,8 +2037,210 @@ class LottoApp:
         mode = st.selectbox("Tryb", ["Gorące", "Zimne", "Hybryda", "Losowe kontrolowane"])
 
         if st.button("🧪 Generuj eksperymentalnie", use_container_width=True):
-            result = self.generator.generate(settings.count, settings, model, f"Eksperymentalny: {mode}")
+            result = self.generator.generate(settings.count, settings, model, f"Eksperymentalny: {mode}", st.session_state.get("risk_profile_final", "🔴 Agresywny"))
             self.show_result(result, settings, f"Eksperymentalny: {mode}")
+
+
+    def tab_manual_check(self):
+        st.header("🎯 Sprawdź mój kupon")
+        st.write(
+            "Ten moduł jest najważniejszy dla uczenia AI. Wpisujesz kupon, który faktycznie zagrałeś "
+            "albo chcesz sprawdzić, wybierasz moduł/strategię i wpisujesz wynik losowania. "
+            "Dopiero takie dane budują prawdziwe DNA Gracza."
+        )
+
+        latest = self.df.iloc[0]
+        default_draw = int(latest["Losowanie"])
+        default_result = " ".join(f"{int(latest[col]):02d}" for col in self.columns)
+
+        c1, c2 = st.columns(2)
+
+        with c1:
+            module = st.selectbox(
+                "Z jakiej strategii pochodził kupon?",
+                [
+                    "Anty-Błąd PRO",
+                    "Elitarny",
+                    "A/B: Bezpieczny balans",
+                    "A/B: Kontrtrend",
+                    "A/B: Elitarny",
+                    "Eksperymentalny: Gorące",
+                    "Eksperymentalny: Zimne",
+                    "Eksperymentalny: Hybryda",
+                    "Ręczny własny kupon",
+                    "Inne",
+                ],
+                help="To pozwala AI budować Ligę Modułów i oceniać, które strategie realnie trafiają najlepiej.",
+            )
+            ticket_text = st.text_input("Mój kupon", value="", help="Wpisz 6 liczb, np. 05 12 17 36 39 49.")
+            note = st.text_input("Notatka do ustawień / strategii", value="", help="Opcjonalnie: np. suma 130-170, max 1 z ostatniego.")
+
+        with c2:
+            draw_id = st.number_input("Numer losowania", min_value=1, value=default_draw)
+            draw_text = st.text_input("Wynik losowania", value=default_result)
+
+        ticket = parse_number_list(ticket_text)
+        draw_numbers = parse_number_list(draw_text)
+
+        if ticket_text and len(ticket) != DRAW_SIZE:
+            st.warning("Kupon musi mieć dokładnie 6 unikalnych liczb z zakresu 1–49.")
+
+        if draw_text and len(draw_numbers) != DRAW_SIZE:
+            st.warning("Wynik losowania musi mieć dokładnie 6 unikalnych liczb.")
+
+        if len(ticket) == DRAW_SIZE and len(draw_numbers) == DRAW_SIZE:
+            hits = len(set(ticket).intersection(set(draw_numbers)))
+            st.metric("Trafienia", f"{hits}/6")
+            st.markdown(ticket_html(ticket, "Twój kupon: " + " ".join(f"{n:02d}" for n in ticket)), unsafe_allow_html=True)
+
+            if st.button("💾 Zapisz sprawdzenie do DNA Gracza", use_container_width=True, type="primary"):
+                ok = self.memory.save_manual_check(
+                    module=module,
+                    ticket=ticket,
+                    draw_id=int(draw_id),
+                    draw_numbers=draw_numbers,
+                    settings_note=note,
+                )
+                if ok:
+                    st.success("Zapisano wynik do Firebase/DNA Gracza.")
+                else:
+                    st.error("Nie udało się zapisać wyniku.")
+
+    def tab_autopilot(self):
+        st.header("🤖 Autopilot AI")
+        st.write(
+            "Autopilot nie przewiduje przyszłości. Analizuje Twoje ocenione kupony i podpowiada, "
+            "które strategie oraz ustawienia warto promować, a które ograniczać."
+        )
+
+        recommendation = self.memory.autopilot_recommendation()
+        center = self.memory.effectiveness_center()
+
+        if not recommendation.get("ready"):
+            st.warning(recommendation.get("message", "Brak danych."))
+            st.info("Zacznij od zapisywania kuponów i sprawdzania ich w zakładce 🎯 Sprawdź mój kupon.")
+            return
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Próby", recommendation["samples"])
+        c2.metric("Pewność", recommendation["confidence"])
+        c3.metric("Najlepszy moduł", recommendation["best_module"])
+        c4.metric("Średnia trafień", recommendation["best_avg_hits"])
+
+        st.subheader("🎯 Rekomendowane ustawienia")
+        st.success(
+            f"Najlepszy kierunek: **{recommendation['best_module']}** | "
+            f"Suma: **{recommendation['recommended_sum_min']}–{recommendation['recommended_sum_max']}** | "
+            f"Parzyste około: **{recommendation['recommended_even']}** | "
+            f"Niskie 1–24 około: **{recommendation['recommended_low']}**"
+        )
+
+        weak = recommendation.get("weak_modules", [])
+        if weak:
+            st.warning("Moduły do ograniczenia według Twojej historii: " + ", ".join(weak))
+
+        if center.get("ready"):
+            st.subheader("📈 Centrum Skuteczności")
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Ocenione kupony", center["total"])
+            m2.metric("Średnia trafień", center["avg_hits"])
+            m3.metric("Najlepszy wynik", f"{center['max_hits']}/6")
+            m4.metric("Współczynnik opłacalności", f"{center['profitability_index']}/100")
+
+            hit_counts = center["hit_counts"]
+            hit_df = pd.DataFrame(
+                {
+                    "Trafienia": list(hit_counts.keys()),
+                    "Liczba kuponów": list(hit_counts.values()),
+                }
+            )
+            st.bar_chart(hit_df.set_index("Trafienia"))
+
+        with st.expander("Tabela modułów Autopilota", expanded=False):
+            table = recommendation.get("module_table")
+            if isinstance(table, pd.DataFrame):
+                st.dataframe(table, use_container_width=True, hide_index=True)
+
+        st.info(
+            "Najlepsza praktyka: korzystaj z rekomendacji dopiero po minimum 20 ocenionych kuponach. "
+            "Po 50+ próbach Autopilot zaczyna mieć dużo większy sens."
+        )
+
+
+
+    def tab_error_killer(self):
+        st.header("🛡️ Strażnik Błędów AI")
+        st.write(
+            "Ten moduł sprawdza dowolny kupon i pokazuje, czy nie ma typowych błędów: "
+            "zbyt skrajnej sumy, złego balansu, za dużego podobieństwa do 999 losowań, "
+            "za wielu gorących/zimnych liczb albo wzorów wybieranych często przez ludzi."
+        )
+
+        settings = self.settings_ui(None)
+        model = self.analytics.build_model(settings.rolling_window)
+        guard = ErrorKillerAI()
+
+        ticket_text = st.text_input("Wpisz kupon do kontroli", value="", help="Przykład: 05 12 17 36 39 49")
+        ticket = parse_number_list(ticket_text)
+
+        if ticket_text and len(ticket) != DRAW_SIZE:
+            st.warning("Wpisz dokładnie 6 liczb.")
+            return
+
+        if len(ticket) == DRAW_SIZE:
+            meta = self.analytics.quality_score(ticket, model, settings)
+            info = guard.inspect(ticket, self.analytics, model, settings, st.session_state.get("risk_profile_final", "🟡 Zrównoważony"))
+            final_q = FinalQualityIndex.calculate(meta, info, settings)
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Ocena FINAL", f"{final_q}/100")
+            c2.metric("Etykieta", FinalQualityIndex.label(final_q))
+            c3.metric("Podobieństwo 999", f"{info['max_similarity_999']}/6")
+            c4.metric("Strażnik", "OK" if info["passed"] else "RYZYKO")
+
+            if info["passed"]:
+                st.success("Kupon przeszedł kontrolę Strażnika Błędów AI.")
+            else:
+                st.warning("Kupon wymaga ostrożności: " + "; ".join(info["reasons"]))
+
+            st.markdown(ticket_html(ticket, "Kontrolowany kupon: " + " ".join(f"{n:02d}" for n in ticket)), unsafe_allow_html=True)
+            st.json({**meta, **info})
+
+    def tab_final_lab(self):
+        st.header("🏆 Laboratorium FINAL TOP")
+        st.write(
+            "Generator tworzy dużą pulę kandydatów, przepuszcza je przez Strażnika Błędów AI, "
+            "Anty-Powtórkę 999 i wskaźnik jakości 0–100, a potem pokazuje wyłącznie TOP selekcję."
+        )
+
+        settings = self.settings_ui(self.memory.dna_player() if self.memory.dna_player().get("ready") else None)
+        model = self.analytics.build_model(settings.rolling_window)
+
+        top_count = st.slider("Ile kuponów TOP pokazać?", 1, 10, 3)
+        style = st.selectbox(
+            "Styl bazowy",
+            ["Anty-Błąd PRO", "Elitarny", "A/B: Bezpieczny balans", "A/B: Kontrtrend", "Eksperymentalny: Hybryda"],
+            index=0,
+        )
+
+        if st.button("🏆 Generuj TOP FINAL", use_container_width=True, type="primary"):
+            lab_settings = GeneratorSettings(
+                **{
+                    **asdict(settings),
+                    "count": int(top_count),
+                    "candidate_attempts": max(5000, settings.candidate_attempts * 3),
+                }
+            )
+            result = self.generator.generate(
+                int(top_count),
+                lab_settings,
+                model,
+                style,
+                st.session_state.get("risk_profile_final", "🟡 Zrównoważony"),
+                final_mode=True,
+            )
+            self.show_result(result, lab_settings, "Laboratorium FINAL TOP")
+
 
     def tab_stats(self):
         st.header("📈 Statystyka bazy")
@@ -1534,10 +2266,10 @@ class LottoApp:
 
             1. Generuj kupony w trybie **Anty-Błąd PRO** albo **Test A/B**.
             2. Klikaj **Zapisz do pamięci AI**.
-            3. Po losowaniu przejdź do **Ocena i Liga**.
+            3. Po losowaniu przejdź do **Ocena i Liga** albo **Sprawdź mój kupon**.
             4. Wpisz realny wynik i oceń kupony.
-            5. Po 20–50 ocenionych kuponach zobacz **DNA Gracza**.
-            6. Korzystaj z rekomendowanych ustawień DNA.
+            5. Po 20–50 ocenionych kuponach zobacz **DNA Gracza** i **Autopilot AI**.
+            6. Korzystaj z rekomendowanych ustawień DNA, ale dalej zapisuj wyniki.
 
             ## Co oznacza AI w tej aplikacji?
 
@@ -1549,15 +2281,27 @@ class LottoApp:
             - naukę najlepszych ustawień,
             - eliminację słabych strategii.
 
-            ## Rekomendowany start
+            ## Rekomendowany start FINAL
 
-            - suma: 120–180,
-            - parzyste: 2–4,
-            - niskie: 2–4,
-            - max ciąg: 2,
-            - max z sektora: 2,
-            - max z ostatniego: 1–2,
-            - profil: Szybki PRO.
+            - zakładka: **🏆 FINAL TOP** albo **🛡️ Generator AI**,
+            - profil ryzyka: **🟡 Zrównoważony**,
+            - suma: **120–180**,
+            - parzyste: **2–4**,
+            - niskie: **2–4**,
+            - max ciąg: **2**,
+            - max z sektora: **2**,
+            - max z ostatniego: **1–2**,
+            - profil pracy: **Szybki PRO**.
+
+            ## Co robi FINAL?
+
+            - tworzy dużą pulę kandydatów,
+            - odrzuca słabe układy przez Strażnika Błędów AI,
+            - sprawdza podobieństwo do 999 losowań,
+            - karze zbyt ludzkie wzory,
+            - wybiera TOP kupony według jakości 0–100,
+            - zapisuje wyniki w Firebase,
+            - buduje DNA Gracza i Autopilota AI.
             """
         )
 
@@ -1567,8 +2311,12 @@ class LottoApp:
         tabs = st.tabs(
             [
                 "🛡️ Generator AI",
+                "🏆 FINAL TOP",
+                "🛡️ Strażnik AI",
+                "🎯 Sprawdź mój kupon",
                 "📊 Ocena i Liga",
                 "🧠 DNA Gracza",
+                "🤖 Autopilot AI",
                 "🧪 Eksperymenty",
                 "📈 Statystyka",
                 "📘 Instrukcja",
@@ -1578,14 +2326,22 @@ class LottoApp:
         with tabs[0]:
             self.tab_generator()
         with tabs[1]:
-            self.tab_evaluate()
+            self.tab_final_lab()
         with tabs[2]:
-            self.tab_dna()
+            self.tab_error_killer()
         with tabs[3]:
-            self.tab_experiments()
+            self.tab_manual_check()
         with tabs[4]:
-            self.tab_stats()
+            self.tab_evaluate()
         with tabs[5]:
+            self.tab_dna()
+        with tabs[6]:
+            self.tab_autopilot()
+        with tabs[7]:
+            self.tab_experiments()
+        with tabs[8]:
+            self.tab_stats()
+        with tabs[9]:
             self.tab_guide()
 
 
