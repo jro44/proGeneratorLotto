@@ -17,9 +17,21 @@
 #   Wyniki060626.pdf albo Wyniki060626.PDF
 #
 # Streamlit Secrets:
-#   firebase_service_account = """
-#   { ...cały JSON z Firebase service account... }
+#   [firebase]
+#   type = "service_account"
+#   project_id = "..."
+#   private_key_id = "..."
+#   private_key = """-----BEGIN PRIVATE KEY-----
+#   ...
+#   -----END PRIVATE KEY-----
 #   """
+#   client_email = "..."
+#   client_id = "..."
+#   auth_uri = "https://accounts.google.com/o/oauth2/auth"
+#   token_uri = "https://oauth2.googleapis.com/token"
+#   auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+#   client_x509_cert_url = "..."
+#   universe_domain = "googleapis.com"
 #
 # requirements.txt:
 #   streamlit>=1.36.0
@@ -214,17 +226,65 @@ class FirebaseBackend:
             return
 
         try:
-            if "firebase_service_account" not in st.secrets:
+            firebase_dict = None
+
+            # Preferowany, stabilny format Streamlit Secrets:
+            #
+            # [firebase]
+            # type = "service_account"
+            # project_id = "..."
+            # private_key_id = "..."
+            # private_key = """-----BEGIN PRIVATE KEY-----
+            # ...
+            # -----END PRIVATE KEY-----
+            # """
+            # client_email = "..."
+            #
+            # Ten format omija problemy z JSON-em i znakami kontrolnymi.
+            if "firebase" in st.secrets:
+                firebase_dict = dict(st.secrets["firebase"])
+
+            # Kompatybilność wsteczna ze starszym formatem:
+            #
+            # firebase_service_account = """
+            # { ... JSON ... }
+            # """
+            elif "firebase_service_account" in st.secrets:
+                firebase_json = st.secrets["firebase_service_account"]
+
+                if isinstance(firebase_json, dict):
+                    firebase_dict = dict(firebase_json)
+                else:
+                    firebase_dict = json.loads(str(firebase_json))
+
+            else:
                 self.enabled = False
-                self.error_message = "Brak firebase_service_account w Streamlit Secrets."
+                self.error_message = "Brak konfiguracji Firebase w Streamlit Secrets. Użyj sekcji [firebase]."
                 return
 
-            firebase_json = st.secrets["firebase_service_account"]
+            required_fields = [
+                "type",
+                "project_id",
+                "private_key_id",
+                "private_key",
+                "client_email",
+                "client_id",
+                "auth_uri",
+                "token_uri",
+                "auth_provider_x509_cert_url",
+                "client_x509_cert_url",
+            ]
 
-            if isinstance(firebase_json, dict):
-                firebase_dict = dict(firebase_json)
-            else:
-                firebase_dict = json.loads(str(firebase_json))
+            missing = [field for field in required_fields if field not in firebase_dict or not firebase_dict[field]]
+
+            if missing:
+                self.enabled = False
+                self.error_message = "Brakuje pól w Secrets [firebase]: " + ", ".join(missing)
+                return
+
+            # Streamlit TOML z blokiem """...""" przechowuje klucz z prawdziwymi nowymi liniami.
+            # Jeśli ktoś jednak wkleił \n jako znaki tekstowe, zamieniamy je na nowe linie.
+            firebase_dict["private_key"] = str(firebase_dict["private_key"]).replace("\\n", "\n")
 
             if not firebase_admin._apps:
                 cred = credentials.Certificate(firebase_dict)
@@ -1173,6 +1233,7 @@ class LottoApp:
             st.write(self.backend.status_label())
             if not self.backend.enabled:
                 st.caption(self.backend.error_message)
+                st.caption("Aplikacja obsługuje format Secrets [firebase].")
 
             keep = st.checkbox("☕ Tryb czuwania Streamlit", value=False)
             if keep:
