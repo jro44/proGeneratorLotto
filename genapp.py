@@ -1904,7 +1904,7 @@ class LottoApp:
         except Exception:
             return None
 
-    def render_persistent_save_panel(self) -> None:
+    def render_persistent_save_panel(self, key_prefix: str = "global") -> None:
         """
         Stały panel zapisu. Jest widoczny nawet po rerunie aplikacji,
         więc zapis do Firebase działa stabilnie na Streamlit Cloud.
@@ -1927,7 +1927,7 @@ class LottoApp:
         c1, c2 = st.columns(2)
 
         with c1:
-            if st.button("💾 Zapisz ostatnie kupony do Firebase/DNA AI", width="stretch", key="persistent_save_last_ai"):
+            if st.button("💾 Zapisz ostatnie kupony do Firebase/DNA AI", width="stretch", key=f"{key_prefix}_persistent_save_last_ai"):
                 saved = self.memory.save_generated(result, settings, source)
                 if saved > 0:
                     st.success(f"Zapisano {saved} kuponów do pamięci AI.")
@@ -1935,7 +1935,7 @@ class LottoApp:
                     st.error("Nie udało się zapisać kuponów. Sprawdź status Firebase i logi aplikacji.")
 
         with c2:
-            if st.button("🧹 Wyczyść ostatni pakiet", width="stretch", key="persistent_clear_last_ai"):
+            if st.button("🧹 Wyczyść ostatni pakiet", width="stretch", key=f"{key_prefix}_persistent_clear_last_ai"):
                 for key in [
                     "last_generated_result",
                     "last_generated_settings",
@@ -1946,7 +1946,7 @@ class LottoApp:
                 st.success("Wyczyszczono ostatni pakiet.")
                 st.rerun()
 
-    def firebase_debug_panel(self) -> None:
+    def firebase_debug_panel(self, key_prefix: str = "global") -> None:
         """
         Test zapisu technicznego do Firestore.
         Jeśli ten przycisk zapisze dokument, Firebase działa,
@@ -1954,7 +1954,7 @@ class LottoApp:
         """
         with st.expander("🧪 Test techniczny Firebase", expanded=False):
             st.write("Użyj tego tylko do sprawdzenia, czy aplikacja realnie tworzy dokument w Firestore.")
-            if st.button("🧪 Zapisz testowy dokument Firebase", key="firebase_debug_write", width="stretch"):
+            if st.button("🧪 Zapisz testowy dokument Firebase", key=f"{key_prefix}_firebase_debug_write", width="stretch"):
                 payload = {
                     "created_at": now_string(),
                     "status": "firebase_write_test_ok",
@@ -2003,8 +2003,9 @@ class LottoApp:
             nums = parse_number_list(str(row["Zestaw"]))
             st.markdown(ticket_html(nums, f"{row['Moduł']}: {row['Zestaw']}"), unsafe_allow_html=True)
 
-        self.render_persistent_save_panel()
-        self.firebase_debug_panel()
+        safe_source_key = re.sub(r"[^a-zA-Z0-9_]+", "_", str(source))
+        self.render_persistent_save_panel(key_prefix=f"show_{safe_source_key}")
+        self.firebase_debug_panel(key_prefix=f"show_{safe_source_key}")
 
     def tab_generator(self):
         st.header("🛡️ Generator Anty-Błąd PRO AI")
@@ -2041,8 +2042,9 @@ class LottoApp:
             result = self.generator.generate_ab(settings, model)
             self.show_result(result, settings, "Test A/B")
 
-        self.render_persistent_save_panel()
-        self.firebase_debug_panel()
+        safe_source_key = re.sub(r"[^a-zA-Z0-9_]+", "_", str(source))
+        self.render_persistent_save_panel(key_prefix=f"show_{safe_source_key}")
+        self.firebase_debug_panel(key_prefix=f"show_{safe_source_key}")
 
     def tab_evaluate(self):
         st.header("📊 Ocena kuponów i Liga Modułów")
@@ -2138,8 +2140,9 @@ class LottoApp:
             result = self.generator.generate(settings.count, settings, model, f"Eksperymentalny: {mode}", st.session_state.get("risk_profile_final", "🔴 Agresywny"))
             self.show_result(result, settings, f"Eksperymentalny: {mode}")
 
-        self.render_persistent_save_panel()
-        self.firebase_debug_panel()
+        safe_source_key = re.sub(r"[^a-zA-Z0-9_]+", "_", str(source))
+        self.render_persistent_save_panel(key_prefix=f"show_{safe_source_key}")
+        self.firebase_debug_panel(key_prefix=f"show_{safe_source_key}")
 
 
     def tab_manual_check(self):
@@ -2344,8 +2347,9 @@ class LottoApp:
             )
             self.show_result(result, lab_settings, "Laboratorium FINAL TOP")
 
-        self.render_persistent_save_panel()
-        self.firebase_debug_panel()
+        safe_source_key = re.sub(r"[^a-zA-Z0-9_]+", "_", str(source))
+        self.render_persistent_save_panel(key_prefix=f"show_{safe_source_key}")
+        self.firebase_debug_panel(key_prefix=f"show_{safe_source_key}")
 
 
     def tab_stats(self):
