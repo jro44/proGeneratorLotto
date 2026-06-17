@@ -1880,6 +1880,16 @@ class LottoApp:
             profile_name=profile,
         )
 
+    def unique_widget_key(self, base: str) -> str:
+        """
+        Zabezpieczenie przed StreamlitDuplicateElementKey.
+        Streamlit renderuje wszystkie zakładki jednocześnie, więc ten sam panel
+        użyty w kilku miejscach musi mieć zawsze unikalny klucz.
+        """
+        registry = st.session_state.setdefault("_widget_key_registry", {})
+        registry[base] = int(registry.get(base, 0)) + 1
+        return f"{base}_{registry[base]}"
+
     def _remember_result(self, result: pd.DataFrame, settings: GeneratorSettings, source: str) -> None:
         """
         Streamlit robi rerun po każdym kliknięciu przycisku.
@@ -1927,7 +1937,7 @@ class LottoApp:
         c1, c2 = st.columns(2)
 
         with c1:
-            if st.button("💾 Zapisz ostatnie kupony do Firebase/DNA AI", width="stretch", key=f"{key_prefix}_persistent_save_last_ai"):
+            if st.button("💾 Zapisz ostatnie kupony do Firebase/DNA AI", width="stretch", key=self.unique_widget_key(f"{key_prefix}_persistent_save_last_ai")):
                 saved = self.memory.save_generated(result, settings, source)
                 if saved > 0:
                     st.success(f"Zapisano {saved} kuponów do pamięci AI.")
@@ -1935,7 +1945,7 @@ class LottoApp:
                     st.error("Nie udało się zapisać kuponów. Sprawdź status Firebase i logi aplikacji.")
 
         with c2:
-            if st.button("🧹 Wyczyść ostatni pakiet", width="stretch", key=f"{key_prefix}_persistent_clear_last_ai"):
+            if st.button("🧹 Wyczyść ostatni pakiet", width="stretch", key=self.unique_widget_key(f"{key_prefix}_persistent_clear_last_ai")):
                 for key in [
                     "last_generated_result",
                     "last_generated_settings",
@@ -1954,7 +1964,7 @@ class LottoApp:
         """
         with st.expander("🧪 Test techniczny Firebase", expanded=False):
             st.write("Użyj tego tylko do sprawdzenia, czy aplikacja realnie tworzy dokument w Firestore.")
-            if st.button("🧪 Zapisz testowy dokument Firebase", key=f"{key_prefix}_firebase_debug_write", width="stretch"):
+            if st.button("🧪 Zapisz testowy dokument Firebase", key=self.unique_widget_key(f"{key_prefix}_firebase_debug_write"), width="stretch"):
                 payload = {
                     "created_at": now_string(),
                     "status": "firebase_write_test_ok",
@@ -2346,8 +2356,8 @@ class LottoApp:
             )
             self.show_result(result, lab_settings, "Laboratorium FINAL TOP")
 
-        self.render_persistent_save_panel(key_prefix="generator_tab")
-        self.firebase_debug_panel(key_prefix="generator_tab")
+        self.render_persistent_save_panel(key_prefix="final_lab_tab")
+        self.firebase_debug_panel(key_prefix="final_lab_tab")
 
 
     def tab_stats(self):
