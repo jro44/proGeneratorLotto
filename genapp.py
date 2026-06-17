@@ -1880,13 +1880,101 @@ class LottoApp:
             profile_name=profile,
         )
 
+    def _remember_result(self, result: pd.DataFrame, settings: GeneratorSettings, source: str) -> None:
+        """
+        Streamlit robi rerun po każdym kliknięciu przycisku.
+        Dlatego wygenerowany wynik musi być zapisany w session_state,
+        inaczej przycisk 'Zapisz do pamięci AI' może nie wykonać zapisu po rerunie.
+        """
+        if result is None or result.empty:
+            return
+
+        st.session_state["last_generated_result"] = result.copy()
+        st.session_state["last_generated_settings"] = asdict(settings)
+        st.session_state["last_generated_source"] = source
+        st.session_state["last_generated_at"] = now_string()
+
+    def _restore_settings_from_state(self) -> Optional[GeneratorSettings]:
+        raw = st.session_state.get("last_generated_settings")
+        if not isinstance(raw, dict):
+            return None
+
+        try:
+            return GeneratorSettings(**raw)
+        except Exception:
+            return None
+
+    def render_persistent_save_panel(self) -> None:
+        """
+        Stały panel zapisu. Jest widoczny nawet po rerunie aplikacji,
+        więc zapis do Firebase działa stabilnie na Streamlit Cloud.
+        """
+        result = st.session_state.get("last_generated_result")
+        settings = self._restore_settings_from_state()
+        source = st.session_state.get("last_generated_source", "Nieznane źródło")
+        generated_at = st.session_state.get("last_generated_at", "")
+
+        if result is None or settings is None:
+            return
+
+        if not isinstance(result, pd.DataFrame) or result.empty:
+            return
+
+        st.subheader("💾 Ostatnio wygenerowany pakiet do zapisu AI")
+        st.caption(f"Źródło: {source} | wygenerowano: {generated_at}")
+        st.dataframe(result, width="stretch", hide_index=True)
+
+        c1, c2 = st.columns(2)
+
+        with c1:
+            if st.button("💾 Zapisz ostatnie kupony do Firebase/DNA AI", width="stretch", key="persistent_save_last_ai"):
+                saved = self.memory.save_generated(result, settings, source)
+                if saved > 0:
+                    st.success(f"Zapisano {saved} kuponów do pamięci AI.")
+                else:
+                    st.error("Nie udało się zapisać kuponów. Sprawdź status Firebase i logi aplikacji.")
+
+        with c2:
+            if st.button("🧹 Wyczyść ostatni pakiet", width="stretch", key="persistent_clear_last_ai"):
+                for key in [
+                    "last_generated_result",
+                    "last_generated_settings",
+                    "last_generated_source",
+                    "last_generated_at",
+                ]:
+                    st.session_state.pop(key, None)
+                st.success("Wyczyszczono ostatni pakiet.")
+                st.rerun()
+
+    def firebase_debug_panel(self) -> None:
+        """
+        Test zapisu technicznego do Firestore.
+        Jeśli ten przycisk zapisze dokument, Firebase działa,
+        a problem dotyczył tylko logiki przycisku zapisu kuponu.
+        """
+        with st.expander("🧪 Test techniczny Firebase", expanded=False):
+            st.write("Użyj tego tylko do sprawdzenia, czy aplikacja realnie tworzy dokument w Firestore.")
+            if st.button("🧪 Zapisz testowy dokument Firebase", key="firebase_debug_write", width="stretch"):
+                payload = {
+                    "created_at": now_string(),
+                    "status": "firebase_write_test_ok",
+                    "app": APP_NAME,
+                }
+                if self.backend.enabled and self.backend.add_document("debug_tests", payload):
+                    st.success("Testowy dokument zapisany. W Firestore szukaj kolekcji: lotto649_ai_debug_tests")
+                else:
+                    st.error("Nie udało się zapisać testu. Firebase nie jest aktywny albo reguły/klucz blokują zapis.")
+                    st.caption(self.backend.error_message)
+
     def show_result(self, result: pd.DataFrame, settings: GeneratorSettings, source: str):
         if result.empty:
             st.error("Brak kuponu. Poluzuj filtry.")
             return
 
+        self._remember_result(result, settings, source)
+
         st.subheader("✅ Kupony")
-        st.dataframe(result, width='stretch', hide_index=True)
+        st.dataframe(result, width="stretch", hide_index=True)
 
         if "Jakość_FINAL_0_100" in result.columns:
             best_final = float(result["Jakość_FINAL_0_100"].max())
@@ -1897,20 +1985,26 @@ class LottoApp:
             )
 
         text = "\n".join(f"{row['Moduł']}: {row['Zestaw']} | jakość={row['Jakość']} | suma={row['Suma']}" for _, row in result.iterrows())
-        st.text_area("Kopiuj kupony", text, height=130)
+        st.text_area("Kopiuj kupony", text, height=130, key=f"copy_area_{source}_{int(time.time())}")
 
         c1, c2 = st.columns(2)
         with c1:
-            st.download_button("⬇️ CSV", result.to_csv(index=False).encode("utf-8-sig"), "kupony_lotto_ai.csv", "text/csv", width='stretch')
+            st.download_button("⬇️ CSV", result.to_csv(index=False).encode("utf-8-sig"), "kupony_lotto_ai.csv", "text/csv", width="stretch", key=f"download_{source}_{int(time.time())}")
         with c2:
-            if st.button("💾 Zapisz do pamięci AI", width='stretch'):
+            if st.button("💾 Zapisz teraz do Firebase/DNA AI", width="stretch", key=f"save_now_{source}_{int(time.time())}"):
                 saved = self.memory.save_generated(result, settings, source)
-                st.success(f"Zapisano {saved} kuponów.")
+                if saved > 0:
+                    st.success(f"Zapisano {saved} kuponów.")
+                else:
+                    st.error("Nie udało się zapisać. Sprawdź Firebase.")
 
         st.subheader("🎫 Blankiet")
         for _, row in result.iterrows():
             nums = parse_number_list(str(row["Zestaw"]))
             st.markdown(ticket_html(nums, f"{row['Moduł']}: {row['Zestaw']}"), unsafe_allow_html=True)
+
+        self.render_persistent_save_panel()
+        self.firebase_debug_panel()
 
     def tab_generator(self):
         st.header("🛡️ Generator Anty-Błąd PRO AI")
@@ -1946,6 +2040,9 @@ class LottoApp:
         if ab:
             result = self.generator.generate_ab(settings, model)
             self.show_result(result, settings, "Test A/B")
+
+        self.render_persistent_save_panel()
+        self.firebase_debug_panel()
 
     def tab_evaluate(self):
         st.header("📊 Ocena kuponów i Liga Modułów")
@@ -2037,9 +2134,12 @@ class LottoApp:
         model = self.analytics.build_model(settings.rolling_window)
         mode = st.selectbox("Tryb", ["Gorące", "Zimne", "Hybryda", "Losowe kontrolowane"], key="experiments_mode")
 
-        if st.button("🧪 Generuj eksperymentalnie", width='stretch'):
+        if st.button("🧪 Generuj eksperymentalnie", width='stretch', key="experiments_generate_button"):
             result = self.generator.generate(settings.count, settings, model, f"Eksperymentalny: {mode}", st.session_state.get("risk_profile_final", "🔴 Agresywny"))
             self.show_result(result, settings, f"Eksperymentalny: {mode}")
+
+        self.render_persistent_save_panel()
+        self.firebase_debug_panel()
 
 
     def tab_manual_check(self):
@@ -2243,6 +2343,9 @@ class LottoApp:
                 final_mode=True,
             )
             self.show_result(result, lab_settings, "Laboratorium FINAL TOP")
+
+        self.render_persistent_save_panel()
+        self.firebase_debug_panel()
 
 
     def tab_stats(self):
