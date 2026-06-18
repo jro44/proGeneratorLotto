@@ -582,7 +582,7 @@ class App:
     def save_generated(self,result:pd.DataFrame,settings:Settings,source:str):
         st.session_state["last_result"]=result.copy(); st.session_state["last_settings"]=asdict(settings); st.session_state["last_source"]=source; st.session_state["last_generated_at"]=now_str()
 
-    def result_panel(self):
+    def result_panel(self, prefix: str = 'global'):
         result=st.session_state.get("last_result"); raw_settings=st.session_state.get("last_settings"); source=st.session_state.get("last_source","unknown")
         if not isinstance(result,pd.DataFrame) or result.empty or not isinstance(raw_settings,dict): return
         st.subheader("💾 Ostatni pakiet"); st.caption(f"Źródło: {source} | {st.session_state.get('last_generated_at','')}"); st.dataframe(result,width="stretch",hide_index=True)
@@ -605,19 +605,19 @@ class App:
     def show_generated(self,df:pd.DataFrame,settings:Settings,source:str):
         self.save_generated(df,settings,source); st.dataframe(df,width="stretch",hide_index=True)
         for _,row in df.iterrows(): st.markdown(ticket_grid(parse_nums(row["Zestaw"]),f"{row['Moduł']}: {row['Zestaw']}"),unsafe_allow_html=True)
-        self.result_panel()
+        self.result_panel(prefix='show_generated')
 
     def page_generator(self):
         settings=self.settings("gen"); c1,c2,c3=st.columns(3)
         if c1.button("🛡️ Anty-Błąd PRO",width="stretch",type="primary",key="gen_anti"): self.show_generated(self.g.generate(settings,"Anty-Błąd PRO"),settings,"Anty-Błąd PRO")
         if c2.button("💎 Elitarny",width="stretch",key="gen_elite"): self.show_generated(self.g.generate(Settings(**{**asdict(settings),"count":1,"attempts":max(settings.attempts,4000)}),"Elitarny",top_mode=True),settings,"Elitarny")
         if c3.button("🧪 Test A/B",width="stretch",key="gen_ab"): self.show_generated(self.g.test_ab(settings),settings,"Test A/B")
-        self.result_panel()
+        self.result_panel(prefix='page_generator')
 
     def page_final(self):
         settings=self.settings("final"); style=st.selectbox("Styl TOP",["Anty-Błąd PRO","Elitarny","Hybryda","Kontrtrend","Gorące","Zimne"],key="final_style")
         if st.button("🏆 Generuj FINAL TOP",width="stretch",type="primary",key="final_go"): self.show_generated(self.g.generate(settings,style,top_mode=True),settings,"FINAL TOP")
-        self.result_panel()
+        self.result_panel(prefix='page_final')
 
     def page_check(self):
         st.header("🎯 Sprawdź mój kupon i ucz AI")
@@ -655,6 +655,7 @@ class App:
 
     def page_firebase_test(self):
         st.header("☁️ Test Firebase"); st.write(f"Kolekcja docelowa: `{FIREBASE_COLLECTION}`")
+        st.info("W Firebase 3 kupony zapisują się jako 3 dokumenty w tej samej kolekcji. Kliknij nazwę kolekcji po lewej, żeby zobaczyć listę dokumentów. Na telefonie panel listy dokumentów może być zwinięty lub niewygodny.")
         if st.button("🧪 Zapisz testowy dokument",width="stretch",key="firebase_test"):
             ok,msg=self.fb.write({"type":"debug","created_at":now_str(),"message":"Firebase działa"}); st.success(msg) if ok else st.warning(msg)
         h=self.history(); st.dataframe(h,width="stretch",hide_index=True)
