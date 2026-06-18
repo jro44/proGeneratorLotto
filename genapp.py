@@ -311,16 +311,53 @@ class FirebaseBackend:
 
     def add_document(self, collection_name: str, data: Dict[str, Any]) -> bool:
         if not self.enabled:
+            self.error_message = "FirebaseBackend.add_document: Firebase nie jest aktywny."
             return False
 
         try:
             doc_id = stable_doc_id(collection_name)
-            self.collection(collection_name).document(doc_id).set(data)
+            full_collection = f"{FIREBASE_COLLECTION_PREFIX}_{collection_name}"
+            payload = dict(data)
+            payload["_collection"] = full_collection
+            payload["_doc_id"] = doc_id
+            self.collection(collection_name).document(doc_id).set(payload)
+            self.error_message = ""
             return True
         except Exception as exc:
-            self.error_message = str(exc)
-            self.enabled = False
+            self.error_message = f"Firebase write error [{collection_name}]: {exc}"
+            # Nie wyłączamy Firebase automatycznie, bo chwilowy błąd nie powinien przełączać całej aplikacji w CSV.
             return False
+
+    def add_documents_batch(self, collection_name: str, rows: List[Dict[str, Any]]) -> Tuple[int, List[str]]:
+        """
+        Jawny zapis wielu dokumentów do Firestore.
+        Zwraca liczbę zapisanych dokumentów i listę błędów.
+        """
+        errors: List[str] = []
+
+        if not self.enabled:
+            return 0, ["Firebase nie jest aktywny."]
+
+        saved = 0
+        full_collection = f"{FIREBASE_COLLECTION_PREFIX}_{collection_name}"
+
+        for index, data in enumerate(rows, start=1):
+            try:
+                doc_id = stable_doc_id(f"{collection_name}_{index}")
+                payload = dict(data)
+                payload["_collection"] = full_collection
+                payload["_doc_id"] = doc_id
+                self.collection(collection_name).document(doc_id).set(payload)
+                saved += 1
+            except Exception as exc:
+                errors.append(f"{index}: {exc}")
+
+        if errors:
+            self.error_message = "; ".join(errors[:3])
+        else:
+            self.error_message = ""
+
+        return saved, errors
 
     def read_collection(self, collection_name: str, limit: int = 5000) -> pd.DataFrame:
         if not self.enabled:
@@ -1266,30 +1303,46 @@ class LearningMemory:
                 "settings": asdict(settings),
                 "evaluated": False,
                 "quality": float(row.get("Jakość", 0)),
+                "final_quality": float(row.get("Jakość_FINAL_0_100", 0)) if "Jakość_FINAL_0_100" in row else 0.0,
+                "final_label": str(row.get("Ocena_FINAL", "")),
                 "sum": int(row.get("Suma", 0)),
                 "even": int(row.get("Parzyste", 0)),
                 "low": int(row.get("Niskie", 0)),
                 "sectors": str(row.get("Sektory", "")),
+                "app_collection_hint": "lotto649_ai_generated_tickets",
             }
             rows.append(item)
 
         if not rows:
+            st.session_state["last_firebase_save_status"] = "Brak kuponów do zapisu."
             return 0
 
-        saved_remote = 0
-
+        # Jeżeli Firebase jest aktywny, zapisujemy jawnie do Firestore.
+        # Nie ukrywamy błędu automatycznym przełączeniem na CSV, bo użytkownik musi widzieć,
+        # czy faktycznie powstała kolekcja w Firestore.
         if self.backend.enabled:
-            for item in rows:
-                if self.backend.add_document("generated_tickets", item):
-                    saved_remote += 1
+            saved_remote, errors = self.backend.add_documents_batch("generated_tickets", rows)
 
-        if saved_remote == len(rows):
+            if saved_remote > 0:
+                st.session_state["last_firebase_save_status"] = (
+                    f"✅ Firebase: zapisano {saved_remote}/{len(rows)} dokumentów do kolekcji "
+                    f"lotto649_ai_generated_tickets."
+                )
+            else:
+                st.session_state["last_firebase_save_status"] = (
+                    "❌ Firebase: nie zapisano dokumentów. Błąd: "
+                    + ("; ".join(errors[:2]) if errors else self.backend.error_message)
+                )
+
             return saved_remote
 
-        # Fallback lokalny
+        # Fallback lokalny tylko wtedy, gdy Firebase naprawdę nieaktywny.
         df_old = pd.read_csv(LOCAL_GENERATED_LOG) if LOCAL_GENERATED_LOG.exists() else pd.DataFrame()
         df_new = pd.concat([df_old, pd.DataFrame(rows)], ignore_index=True)
         df_new.to_csv(LOCAL_GENERATED_LOG, index=False, encoding="utf-8-sig")
+        st.session_state["last_firebase_save_status"] = (
+            f"⚠️ Tryb lokalny CSV: zapisano {len(rows)} rekordów lokalnie, nie w Firebase."
+        )
         return len(rows)
 
     def load_generated(self) -> pd.DataFrame:
@@ -1744,6 +1797,11 @@ class LottoApp:
                 st.caption(self.backend.error_message)
                 st.caption("Aplikacja obsługuje format Secrets [firebase].")
 
+            last_status = st.session_state.get("last_firebase_save_status")
+            if last_status:
+                st.caption("Ostatni zapis:")
+                st.caption(last_status)
+
             keep = st.checkbox("☕ Tryb czuwania Streamlit", value=False)
             if keep:
                 minutes = st.slider("Odświeżaj co minut", 5, 30, 12)
@@ -1934,15 +1992,29 @@ class LottoApp:
         st.caption(f"Źródło: {source} | wygenerowano: {generated_at}")
         st.dataframe(result, width="stretch", hide_index=True)
 
+        last_status = st.session_state.get("last_firebase_save_status")
+        if last_status:
+            if str(last_status).startswith("✅"):
+                st.success(last_status)
+            elif str(last_status).startswith("❌"):
+                st.error(last_status)
+            else:
+                st.info(last_status)
+
         c1, c2 = st.columns(2)
 
         with c1:
             if st.button("💾 Zapisz ostatnie kupony do Firebase/DNA AI", width="stretch", key=self.unique_widget_key(f"{key_prefix}_persistent_save_last_ai")):
                 saved = self.memory.save_generated(result, settings, source)
                 if saved > 0:
-                    st.success(f"Zapisano {saved} kuponów do pamięci AI.")
+                    st.success(
+                        f"Zapisano {saved} kuponów do Firestore. "
+                        f"W Firebase odśwież stronę i szukaj kolekcji: lotto649_ai_generated_tickets"
+                    )
                 else:
-                    st.error("Nie udało się zapisać kuponów. Sprawdź status Firebase i logi aplikacji.")
+                    st.error("Nie udało się zapisać kuponów do Firebase.")
+                    st.caption(self.backend.error_message)
+                st.rerun()
 
         with c2:
             if st.button("🧹 Wyczyść ostatni pakiet", width="stretch", key=self.unique_widget_key(f"{key_prefix}_persistent_clear_last_ai")):
@@ -1969,12 +2041,16 @@ class LottoApp:
                     "created_at": now_string(),
                     "status": "firebase_write_test_ok",
                     "app": APP_NAME,
+                    "hint": "Jeśli widzisz ten dokument, Firebase działa poprawnie.",
                 }
                 if self.backend.enabled and self.backend.add_document("debug_tests", payload):
-                    st.success("Testowy dokument zapisany. W Firestore szukaj kolekcji: lotto649_ai_debug_tests")
+                    st.success("Testowy dokument zapisany. W Firestore odśwież stronę i szukaj kolekcji: lotto649_ai_debug_tests")
+                    st.session_state["last_firebase_save_status"] = "✅ Firebase test: dokument zapisany do lotto649_ai_debug_tests."
                 else:
-                    st.error("Nie udało się zapisać testu. Firebase nie jest aktywny albo reguły/klucz blokują zapis.")
+                    st.error("Nie udało się zapisać testu. Firebase nie jest aktywny albo zapis został zablokowany.")
                     st.caption(self.backend.error_message)
+                    st.session_state["last_firebase_save_status"] = "❌ Firebase test nieudany: " + str(self.backend.error_message)
+                st.rerun()
 
     def show_result(self, result: pd.DataFrame, settings: GeneratorSettings, source: str):
         if result.empty:
